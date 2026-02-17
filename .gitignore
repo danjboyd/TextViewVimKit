@@ -1,0 +1,21 @@
+# GNUstep build artifacts
+obj/
+**/obj/
+*.o
+*.d
+*.obj
+*.obj.*
+stamp.make
+
+# Built products
+*.app/
+*.bundle/
+
+# Logs and runtime output
+*.log
+
+# Editor/OS noise
+*~
+.DS_Store
+.Trashes
+Thumbs.db
