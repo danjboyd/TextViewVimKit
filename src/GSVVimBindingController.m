@@ -38,6 +38,11 @@ static NSString *GSVKeyTokenFromEvent(NSEvent *event)
     return [characters substringToIndex:1];
 }
 
+static BOOL GSVTokenIsColonCommandStart(NSString *token)
+{
+    return token != nil && [token isEqualToString:@":"];
+}
+
 static BOOL GSVEventHasUnsupportedInsertModifiers(NSEvent *event)
 {
     NSUInteger flags = [event modifierFlags];
@@ -55,6 +60,58 @@ static BOOL GSVTokenIsSingleInsertableCharacter(NSString *token)
         return NO;
     }
     return YES;
+}
+
+static BOOL GSVIsCommandLineBackspace(unichar ch)
+{
+    return ch == 0x08 || ch == 0x7f;
+}
+
+static BOOL GSVIsCommandLineEnter(unichar ch)
+{
+    return ch == '\r' || ch == '\n';
+}
+
+static NSString *GSVTrimmedCommandString(NSString *value)
+{
+    if (value == nil) {
+        return @"";
+    }
+    return [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+static GSVVimExAction GSVParseExAction(NSString *rawCommand, BOOL *force)
+{
+    if (force != NULL) {
+        *force = NO;
+    }
+
+    NSString *trimmed = GSVTrimmedCommandString(rawCommand);
+    if ([trimmed length] == 0) {
+        return GSVVimExActionUnknown;
+    }
+
+    BOOL parsedForce = NO;
+    if ([trimmed hasSuffix:@"!"]) {
+        parsedForce = YES;
+        trimmed = [trimmed substringToIndex:([trimmed length] - 1)];
+        trimmed = GSVTrimmedCommandString(trimmed);
+    }
+    if (force != NULL) {
+        *force = parsedForce;
+    }
+
+    NSString *lower = [trimmed lowercaseString];
+    if ([lower isEqualToString:@"w"]) {
+        return GSVVimExActionWrite;
+    }
+    if ([lower isEqualToString:@"q"]) {
+        return GSVVimExActionQuit;
+    }
+    if ([lower isEqualToString:@"wq"] || [lower isEqualToString:@"x"]) {
+        return GSVVimExActionWriteQuit;
+    }
+    return GSVVimExActionUnknown;
 }
 
 #if defined(NSPasteboardTypeString)
@@ -104,6 +161,8 @@ static NSString *GSVPasteboardStringType(void)
 @property (nonatomic, strong) GSVVimEngine *engine;
 @property (nonatomic, strong) GSVTextViewAdapter *adapter;
 @property (nonatomic, strong) NSMutableString *insertRecentKeys;
+@property (nonatomic, assign) BOOL commandLineActive;
+@property (nonatomic, strong) NSMutableString *commandLineBuffer;
 @end
 
 @implementation GSVVimBindingController
@@ -124,6 +183,8 @@ static NSString *GSVPasteboardStringType(void)
     _config = [[GSVVimConfig alloc] initWithInsertModeMappings:nil diagnostics:nil];
     _engine.unnamedRegisterUsesClipboard = _config.unnamedRegisterUsesSystemClipboard;
     _insertRecentKeys = [NSMutableString string];
+    _commandLineBuffer = [NSMutableString string];
+    _commandLineActive = NO;
     _enabled = YES;
     return self;
 }
@@ -137,8 +198,18 @@ static NSString *GSVPasteboardStringType(void)
 {
     _enabled = enabled;
     if (!enabled) {
+        [self setCommandLineActive:NO];
+        [self.commandLineBuffer setString:@""];
         [self clearInsertRecentKeys];
         [self.engine resetToNormalMode];
+        id<GSVVimBindingControllerDelegate> delegate = self.delegate;
+        if (delegate != nil &&
+            [delegate respondsToSelector:@selector(vimBindingController:didUpdateCommandLine:active:forTextView:)]) {
+            [delegate vimBindingController:self
+                      didUpdateCommandLine:nil
+                                    active:NO
+                               forTextView:self.textView];
+        }
     }
 }
 
@@ -156,6 +227,115 @@ static NSString *GSVPasteboardStringType(void)
 - (void)clearInsertRecentKeys
 {
     [self.insertRecentKeys setString:@""];
+}
+
+- (void)notifyCommandLineState
+{
+    id<GSVVimBindingControllerDelegate> delegate = self.delegate;
+    if (delegate != nil &&
+        [delegate respondsToSelector:@selector(vimBindingController:didUpdateCommandLine:active:forTextView:)]) {
+        NSString *value = nil;
+        if (self.commandLineActive) {
+            value = [NSString stringWithFormat:@":%@", self.commandLineBuffer];
+        }
+        [delegate vimBindingController:self
+                  didUpdateCommandLine:value
+                                active:self.commandLineActive
+                           forTextView:self.textView];
+    }
+}
+
+- (void)beginCommandLineCapture
+{
+    self.commandLineActive = YES;
+    [self.commandLineBuffer setString:@""];
+    [self notifyCommandLineState];
+}
+
+- (void)cancelCommandLineCapture
+{
+    self.commandLineActive = NO;
+    [self.commandLineBuffer setString:@""];
+    [self notifyCommandLineState];
+}
+
+- (void)appendCommandLineCharacter:(unichar)ch
+{
+    [self.commandLineBuffer appendFormat:@"%C", ch];
+    [self notifyCommandLineState];
+}
+
+- (void)deleteLastCommandLineCharacter
+{
+    NSUInteger length = [self.commandLineBuffer length];
+    if (length == 0) {
+        return;
+    }
+    [self.commandLineBuffer deleteCharactersInRange:NSMakeRange(length - 1, 1)];
+    [self notifyCommandLineState];
+}
+
+- (BOOL)dispatchCommandLineAction
+{
+    NSString *rawCommand = [self.commandLineBuffer copy];
+    NSString *trimmed = GSVTrimmedCommandString(rawCommand);
+    [self cancelCommandLineCapture];
+    if ([trimmed length] == 0) {
+        return YES;
+    }
+
+    BOOL force = NO;
+    GSVVimExAction action = GSVParseExAction(rawCommand, &force);
+    BOOL handled = NO;
+    id<GSVVimBindingControllerDelegate> delegate = self.delegate;
+    if (delegate != nil &&
+        [delegate respondsToSelector:@selector(vimBindingController:handleExAction:force:rawCommand:forTextView:)]) {
+        handled = [delegate vimBindingController:self
+                                  handleExAction:action
+                                           force:force
+                                      rawCommand:rawCommand
+                                     forTextView:self.textView];
+    }
+
+    if (!handled && action == GSVVimExActionUnknown) {
+        NSBeep();
+    }
+    return YES;
+}
+
+- (BOOL)handleCommandLineEvent:(NSEvent *)event
+{
+    NSString *characters = [event characters];
+    if (characters == nil || [characters length] == 0) {
+        characters = [event charactersIgnoringModifiers];
+    }
+    if (characters == nil || [characters length] == 0) {
+        return YES;
+    }
+
+    unichar ch = [characters characterAtIndex:0];
+    if (ch == 0x1b) {
+        [self cancelCommandLineCapture];
+        return YES;
+    }
+    if (GSVIsCommandLineEnter(ch)) {
+        return [self dispatchCommandLineAction];
+    }
+    if (GSVIsCommandLineBackspace(ch)) {
+        [self deleteLastCommandLineCharacter];
+        return YES;
+    }
+
+    NSUInteger flags = [event modifierFlags];
+    NSUInteger normalized = flags & (NSCommandKeyMask | NSControlKeyMask);
+    if (normalized != 0) {
+        return YES;
+    }
+
+    if (ch >= 0x20 && ch != 0x7f) {
+        [self appendCommandLineCharacter:ch];
+    }
+    return YES;
 }
 
 - (BOOL)handleInsertMappingMatchForToken:(NSString *)token event:(NSEvent *)event
@@ -265,6 +445,15 @@ static NSString *GSVPasteboardStringType(void)
     NSString *token = GSVKeyTokenFromEvent(event);
     if (token == nil) {
         return NO;
+    }
+
+    if (self.commandLineActive) {
+        return [self handleCommandLineEvent:event];
+    }
+
+    if (self.engine.mode == GSVVimModeNormal && GSVTokenIsColonCommandStart(token)) {
+        [self beginCommandLineCapture];
+        return YES;
     }
 
     if (self.engine.mode == GSVVimModeInsert) {

@@ -5,9 +5,26 @@
 
 @class GSVVimBindingController;
 
+typedef NS_ENUM(NSInteger, GSVVimExAction) {
+    GSVVimExActionWrite = 0,
+    GSVVimExActionQuit = 1,
+    GSVVimExActionWriteQuit = 2,
+    GSVVimExActionUnknown = 3
+};
+
 @protocol GSVVimBindingControllerDelegate <NSObject>
 - (void)vimBindingController:(GSVVimBindingController *)controller
                didChangeMode:(GSVVimMode)mode
+                 forTextView:(NSTextView *)textView;
+@optional
+- (BOOL)vimBindingController:(GSVVimBindingController *)controller
+              handleExAction:(GSVVimExAction)action
+                       force:(BOOL)force
+                  rawCommand:(NSString *)rawCommand
+                 forTextView:(NSTextView *)textView;
+- (void)vimBindingController:(GSVVimBindingController *)controller
+        didUpdateCommandLine:(NSString *)commandLine
+                      active:(BOOL)active
                  forTextView:(NSTextView *)textView;
 @end
 

@@ -6,6 +6,7 @@ Reusable Vim-style key bindings for GNUstep/Cocoa text editing, designed to atta
 - GNUstep-first implementation.
 - Works on plain `NSTextView` and subclass fixtures.
 - Pragmatic Vim subset (not full Vim runtime parity).
+- Reusable Ex action dispatch for host-provided save/quit behavior.
 
 ## What This Library Provides
 - Modal editing engine: `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE`.
@@ -25,6 +26,9 @@ Reusable Vim-style key bindings for GNUstep/Cocoa text editing, designed to atta
 - explicit clipboard register: `"+y...`, `"+p`, `"+P`
 - Counts: examples `3j`, `d2w`, `2dd`, `3x`, `2p`.
 - Repeat/undo/redo: `.`, `u`, `<C-r>`.
+- Ex command-line capture from `:` in normal mode.
+- Parsed Ex actions: `:w`, `:q`, `:wq`, `:x`, plus `!` force suffix variants.
+- Command-line keys: `<Esc>` cancels, `<Enter>` dispatches.
 
 ## Integrating Into Your App
 
@@ -37,6 +41,7 @@ Add `src/*.h` and `src/*.m` to your target, and link AppKit/Foundation.
 #import "GSVVimConfigLoader.h"
 
 self.vimController = [[GSVVimBindingController alloc] initWithTextView:self.textView];
+self.vimController.delegate = self;
 self.vimController.config = [GSVVimConfigLoader loadDefaultConfig];
 ```
 
@@ -63,6 +68,54 @@ Example from a window-level event hook:
 Notes:
 - If `handleKeyEvent:` returns `NO`, keep native behavior unchanged.
 - IME/marked text is already respected by the controller.
+
+### 4. (Optional) Handle Ex actions in your host app
+If your app should support `:w`, `:q`, `:wq`, and `:x`, implement the optional delegate callback.
+
+```objc
+- (BOOL)vimBindingController:(GSVVimBindingController *)controller
+              handleExAction:(GSVVimExAction)action
+                       force:(BOOL)force
+                  rawCommand:(NSString *)rawCommand
+                 forTextView:(NSTextView *)textView
+{
+    (void)controller;
+    (void)rawCommand;
+    (void)textView;
+
+    switch (action) {
+        case GSVVimExActionWrite:
+            return [self saveCurrentDocument];
+        case GSVVimExActionQuit:
+            [self closeCurrentDocumentForce:force];
+            return YES;
+        case GSVVimExActionWriteQuit:
+            if (![self saveCurrentDocument]) {
+                return NO;
+            }
+            [self closeCurrentDocumentForce:force];
+            return YES;
+        case GSVVimExActionUnknown:
+        default:
+            return NO;
+    }
+}
+```
+
+Notes:
+- `force` is `YES` when a trailing `!` is present (for example `:q!`).
+- Unknown commands arrive as `GSVVimExActionUnknown`.
+- If unknown commands are not handled, the controller emits a beep.
+
+### 5. (Optional) Show command-line/status text
+Use the optional status callback to mirror Vim command-line input in your UI.
+
+```objc
+- (void)vimBindingController:(GSVVimBindingController *)controller
+        didUpdateCommandLine:(NSString *)commandLine
+                      active:(BOOL)active
+                 forTextView:(NSTextView *)textView;
+```
 
 ## Configuration
 Load defaults:

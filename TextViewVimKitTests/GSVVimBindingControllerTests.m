@@ -17,6 +17,66 @@
 @implementation GSVTestFixtureTextView
 @end
 
+@interface GSVVimBindingDelegateSpy : NSObject <GSVVimBindingControllerDelegate>
+@property (nonatomic, assign) NSInteger exActionCallCount;
+@property (nonatomic, assign) GSVVimExAction lastExAction;
+@property (nonatomic, assign) BOOL lastExForce;
+@property (nonatomic, copy) NSString *lastRawCommand;
+@property (nonatomic, copy) NSString *lastCommandLineText;
+@property (nonatomic, assign) BOOL lastCommandLineActive;
+@property (nonatomic, assign) BOOL nextExActionResult;
+@end
+
+@implementation GSVVimBindingDelegateSpy
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    _lastExAction = GSVVimExActionUnknown;
+    _nextExActionResult = YES;
+    return self;
+}
+
+- (void)vimBindingController:(GSVVimBindingController *)controller
+               didChangeMode:(GSVVimMode)mode
+                 forTextView:(NSTextView *)textView
+{
+    (void)controller;
+    (void)mode;
+    (void)textView;
+}
+
+- (BOOL)vimBindingController:(GSVVimBindingController *)controller
+              handleExAction:(GSVVimExAction)action
+                       force:(BOOL)force
+                  rawCommand:(NSString *)rawCommand
+                 forTextView:(NSTextView *)textView
+{
+    (void)controller;
+    (void)textView;
+    self.exActionCallCount += 1;
+    self.lastExAction = action;
+    self.lastExForce = force;
+    self.lastRawCommand = rawCommand;
+    return self.nextExActionResult;
+}
+
+- (void)vimBindingController:(GSVVimBindingController *)controller
+        didUpdateCommandLine:(NSString *)commandLine
+                      active:(BOOL)active
+                 forTextView:(NSTextView *)textView
+{
+    (void)controller;
+    (void)textView;
+    self.lastCommandLineText = commandLine;
+    self.lastCommandLineActive = active;
+}
+
+@end
+
 static NSEvent *GSVMakeKeyEvent(NSString *characters,
                                 NSString *charactersIgnoringModifiers,
                                 NSUInteger flags)
@@ -572,6 +632,88 @@ static NSUInteger GSVFirstNonBlankForRange(NSString *text, NSRange lineRange)
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"+", @"+", 0)]);
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"p", @"p", 0)]);
     XCTAssertEqualObjects([textView string], @"abZZcd");
+}
+
+- (void)testColonWriteDispatchesReusableExAction
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    [textView setString:@"alpha"];
+    [textView setSelectedRange:NSMakeRange(5, 0)];
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVVimBindingDelegateSpy *spy = [[GSVVimBindingDelegateSpy alloc] init];
+    controller.delegate = spy;
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@":", @":", 0)]);
+    XCTAssertEqualObjects(spy.lastCommandLineText, @":");
+    XCTAssertTrue(spy.lastCommandLineActive);
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"w", @"w", 0)]);
+    XCTAssertEqualObjects(spy.lastCommandLineText, @":w");
+    XCTAssertTrue(spy.lastCommandLineActive);
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\r", @"\r", 0)]);
+    XCTAssertEqual(spy.exActionCallCount, (NSInteger)1);
+    XCTAssertEqual(spy.lastExAction, GSVVimExActionWrite);
+    XCTAssertFalse(spy.lastExForce);
+    XCTAssertEqualObjects(spy.lastRawCommand, @"w");
+    XCTAssertFalse(spy.lastCommandLineActive);
+    XCTAssertEqualObjects([textView string], @"alpha");
+}
+
+- (void)testColonQuitBangDispatchesForceQuitAction
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVVimBindingDelegateSpy *spy = [[GSVVimBindingDelegateSpy alloc] init];
+    controller.delegate = spy;
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@":", @":", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"q", @"q", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"!", @"!", NSShiftKeyMask)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\r", @"\r", 0)]);
+
+    XCTAssertEqual(spy.exActionCallCount, (NSInteger)1);
+    XCTAssertEqual(spy.lastExAction, GSVVimExActionQuit);
+    XCTAssertTrue(spy.lastExForce);
+    XCTAssertEqualObjects(spy.lastRawCommand, @"q!");
+}
+
+- (void)testColonWriteQuitAndUnknownDispatchActions
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVVimBindingDelegateSpy *spy = [[GSVVimBindingDelegateSpy alloc] init];
+    controller.delegate = spy;
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@":", @":", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"w", @"w", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"q", @"q", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\r", @"\r", 0)]);
+    XCTAssertEqual(spy.lastExAction, GSVVimExActionWriteQuit);
+    XCTAssertEqualObjects(spy.lastRawCommand, @"wq");
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@":", @":", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"f", @"f", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"o", @"o", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"o", @"o", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\r", @"\r", 0)]);
+    XCTAssertEqual(spy.lastExAction, GSVVimExActionUnknown);
+    XCTAssertEqualObjects(spy.lastRawCommand, @"foo");
+}
+
+- (void)testColonCommandEscapeCancelsWithoutDispatch
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVVimBindingDelegateSpy *spy = [[GSVVimBindingDelegateSpy alloc] init];
+    controller.delegate = spy;
+
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@":", @":", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"q", @"q", 0)]);
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\x1b", @"\x1b", 0)]);
+
+    XCTAssertEqual(spy.exActionCallCount, (NSInteger)0);
+    XCTAssertFalse(spy.lastCommandLineActive);
 }
 
 @end
