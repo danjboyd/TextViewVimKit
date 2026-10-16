@@ -17,15 +17,18 @@ Reusable Vim-style key bindings for GNUstep/Cocoa text editing, designed to atta
 - optional `~/.vimrc` compatibility import (lower priority)
 
 ## Supported Feature Subset (Current)
-- Modes: `i`, `a`, `o`, `O`, `Esc`, `v`, `V`.
-- Motions: `h`, `j`, `k`, `l`, `w`, `b`, `e`, `0`, `^`, `$`, `gg`, `G`.
-- Operators: `d{motion}`, `y{motion}`, `c{motion}`, plus `dd`, `yy`, `cc`, `C`, `D`.
-- Word text objects: `ciw`, `caw`, `diw`, `daw`, `yiw`, `yaw`.
-- Put/yank registers:
-- unnamed register: `p`, `P`
-- explicit clipboard register: `"+y...`, `"+p`, `"+P`
-- Counts: examples `3j`, `d2w`, `2dd`, `3x`, `2p`.
-- Repeat/undo/redo: `.`, `u`, `<C-r>`.
+- Modes: `i`, `a`, `I`, `A`, `o`, `O`, `s`, `S`, `Esc`, `v`, `V`. A count repeats what was typed (`3ihi<Esc>`).
+- Motions: `h`, `j`, `k`, `l`, `w`, `b`, `e`, `W`, `B`, `E`, `0`, `^`, `$`, `+`, `-`, `{`, `}`, `%`, `gg`, `G`, `{count}G`, `{count}gg`.
+- Find on the line: `f`, `F`, `t`, `T`, with `;` and `,` to repeat (and with operators: `dt)`, `c2f,`).
+- Operators: `d{motion}`, `y{motion}`, `c{motion}`, plus `dd`, `yy`, `Y`, `cc`, `C`, `D`. Line motions (`j`, `k`, `G`, `gg`, `+`, `-`) make them linewise; `dw` on a line's last word stops at the line's end.
+- Edits: `x`, `X` (within the line), `r{char}`, `~`, `J`, `p`, `P`.
+- Text objects: `iw`/`aw`, `iW`/`aW`, `i"`/`a"`, `i'`/`a'`, ``i` ``/``a` ``, `i(`/`a(` (`ib`), `i[`/`a[`, `i{`/`a{` (`iB`), `i<`/`a<`.
+- Registers: unnamed; named `"a`–`"z` (`"A`–`"Z` append); black hole `"_`; clipboard `"+` and `"*`.
+- Visual mode: motions and finds, text objects (`viw`, `vi"`, ...), `o`, `d`/`x`, `X`/`D`, `y`/`Y`, `c`/`s`, `r{char}`, `~`, `u`, `U`, `J`, `p`.
+- Counts: examples `3j`, `d2w`, `2dd`, `3x`, `2p`, `3J`, `5G`.
+- Repeat/undo/redo: `.` repeats changes including what was typed in Insert mode (`cw`, `A`, `o`, ...); `u`, `<C-r>`.
+
+Known deviations: `.` replays the text typed in Insert mode as one insertion (arrow-key movement inside it isn't replayed); `cc`/`S` keep the line's indent, as with `autoindent`; `U` undoes like `u`; `{`/`}` stop at empty lines only; quote objects work within the cursor's line. Not implemented yet: search (`/`, `?`, `n`, `N`, `*`, `#`), marks, macros, `>>`/`<<`, `gu`/`gU`, screen motions (`H`, `M`, `L`, `<C-d>`).
 - Ex command-line capture from `:` in normal mode.
 - Parsed Ex actions: `:w`, `:q`, `:wq`, `:x`, plus `!` force suffix variants.
 - Command-line keys: `<Esc>` cancels, `<Enter>` dispatches.

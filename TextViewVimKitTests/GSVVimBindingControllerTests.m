@@ -394,7 +394,7 @@ static NSUInteger GSVFirstNonBlankForRange(NSString *text, NSRange lineRange)
     XCTAssertEqualObjects([textView string], @"one\nthree");
 
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"p", @"p", 0)]);
-    XCTAssertEqualObjects([textView string], @"one\nthree\ntwo\n");
+    XCTAssertEqualObjects([textView string], @"one\nthree\ntwo");
 }
 
 - (void)testYankLineAndPutBeforeOnSubclass
@@ -442,7 +442,7 @@ static NSUInteger GSVFirstNonBlankForRange(NSString *text, NSRange lineRange)
     [textView setSelectedRange:NSMakeRange(4, 0)];
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"d", @"d", 0)]);
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"G", @"g", NSShiftKeyMask)]);
-    XCTAssertEqualObjects([textView string], @"one\n");
+    XCTAssertEqualObjects([textView string], @"one");
 }
 
 - (void)testChangeInnerWordOnPlainNSTextView
@@ -542,7 +542,7 @@ static NSUInteger GSVFirstNonBlankForRange(NSString *text, NSRange lineRange)
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"c", @"c", 0)]);
     XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"c", @"c", 0)]);
     XCTAssertEqual(controller.mode, GSVVimModeInsert);
-    XCTAssertEqualObjects([textView string], @"one\nthree");
+    XCTAssertEqualObjects([textView string], @"one\n\nthree");
 }
 
 - (void)testDiwDawYiwYawOnPlainNSTextView
@@ -714,6 +714,60 @@ static NSUInteger GSVFirstNonBlankForRange(NSString *text, NSRange lineRange)
 
     XCTAssertEqual(spy.exActionCallCount, (NSInteger)0);
     XCTAssertFalse(spy.lastCommandLineActive);
+}
+
+#pragma mark - Vim fidelity (audit 2026-10)
+
+static void GSVSendKeys(GSVVimBindingController *controller, NSString *keys)
+{
+    for (NSUInteger i = 0; i < [keys length]; i += 1) {
+        unichar ch = [keys characterAtIndex:i];
+        NSString *key = [NSString stringWithCharacters:&ch length:1];
+        NSString *ignoring = [key lowercaseString];
+        NSUInteger flags = [key isEqualToString:ignoring] ? 0 : NSShiftKeyMask;
+        (void)[controller handleKeyEvent:GSVMakeKeyEvent(key, ignoring, flags)];
+    }
+}
+
+- (void)testAppendAtTheEndOfTheLastLineOnPlainNSTextView
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    [textView setString:@"one\ntwo"];
+    [textView setSelectedRange:NSMakeRange(4, 0)];
+
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVSendKeys(controller, @"A");
+    XCTAssertEqual(controller.mode, GSVVimModeInsert);
+    XCTAssertEqual([textView selectedRange].location, (NSUInteger)7);
+    [textView insertText:@"!"];
+    XCTAssertTrue([controller handleKeyEvent:GSVMakeKeyEvent(@"\e", @"\e", 0)]);
+    XCTAssertEqualObjects([textView string], @"one\ntwo!");
+    XCTAssertEqual([textView selectedRange].location, (NSUInteger)7);
+}
+
+- (void)testDeleteWordOnTheLastWordOfALineOnPlainNSTextView
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    [textView setString:@"one two\n  three"];
+    [textView setSelectedRange:NSMakeRange(4, 0)];
+
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVSendKeys(controller, @"dw");
+    XCTAssertEqualObjects([textView string], @"one \n  three");
+}
+
+- (void)testLineMotionOperatorsAreLinewiseOnPlainNSTextView
+{
+    NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 200.0, 120.0)];
+    [textView setString:@"one\ntwo\nthree\nfour"];
+    [textView setSelectedRange:NSMakeRange(5, 0)];
+
+    GSVVimBindingController *controller = [[GSVVimBindingController alloc] initWithTextView:textView];
+    GSVSendKeys(controller, @"dj");
+    XCTAssertEqualObjects([textView string], @"one\nfour");
+    GSVSendKeys(controller, @"u");
+    GSVSendKeys(controller, @"2G");
+    XCTAssertEqual([textView selectedRange].location, (NSUInteger)4);
 }
 
 @end
