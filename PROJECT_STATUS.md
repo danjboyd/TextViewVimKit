@@ -1,4 +1,4 @@
-# TextViewVimKit Project Status (2026-02-17)
+# TextViewVimKit Project Status (2026-10-15)
 
 ## Current Snapshot
 - GNUstep-first Vim bindings layer is working on both plain `NSTextView` and `NSTextView` subclasses.
@@ -53,26 +53,32 @@
 - Engine, controller, and config loader tests are in place.
 - Latest run status: all tests passing (`GSVVimBindingControllerTests`, `GSVVimConfigLoaderTests`, `GSVVimEngineTests`).
 
+### Vim fidelity audit (2026-10-15)
+Batches 1-3 below are done, with these fixes:
+- Commands are case-sensitive: `A`, `I`, `X`, `J`, `Y` are their own commands (they ran `a`, `i`, `x`, `j`, `y`).
+- `j`, `k`, `G`, `gg` make an operator linewise (`dj`, `dG`, `ygg`); `dd` on the last line takes the newline before it.
+- `cc`/`S` empty the line (keeping its indent) instead of deleting it.
+- `x` stays on its line and fills the register; `a` on an empty line stays on it.
+- `<Esc>` from Insert mode doesn't step back past the start of the line.
+- `{count}G` and `{count}gg` go to that line.
+- `dw` on a line's last word stops at the line's end.
+- `.` repeats changes with their typed text (`cw`, `ct;`, `A`, `o`, ...), and an Insert count repeats the text.
+- Also added: `W`/`B`/`E`, `{`/`}`, `%`, `+`/`-`, `r`, `~`, `J`, `s`/`S`, more Visual mode commands (`o`, `x`, `~`, `u`, `U`, `J`, `r`, `p`, text objects, finds).
+
 ## Roadmap Remaining (Prioritized)
 
-### Batch 1 (recommended next)
-- Character-find motions: `f`, `F`, `t`, `T`.
-- Find-repeat: `;` and `,`.
-- Count support + operator-pending support for those motions (e.g. `d2f,`, `ct)`).
-- Dot-repeat coverage for the new change/delete flows.
+### Batch 1 (done 2026-10-15)
+- Character-find motions `f`, `F`, `t`, `T`; repeats `;` and `,`; counts and operators (`d2f,`, `ct)`); dot-repeat.
 
-### Batch 2
-- Delimiter/quote text objects:
-- `ci"`, `ca"`, `ci'`, `ca'`
-- `ci(` / `ca(`, `ci[` / `ca[`, `ci{` / `ca{`
-- Matching-delimiter motion `%` (including operator usage).
+### Batch 2 (done 2026-10-15)
+- Quote and bracket text objects (`ci"`, `ca'`, `di(`, `yi{`, `iB`, `ib`, `i<`, `iW`); `%` with operators.
 
-### Batch 3
-- Named registers (`"a`..`"z`) and black-hole register (`"_`).
-- Register behavior details (append semantics, etc.) as pragmatic subset.
+### Batch 3 (done 2026-10-15)
+- Named registers `"a`..`"z`, appending `"A`..`"Z`, black hole `"_`, clipboard `"+`/`"*`.
 
-### Batch 4
-- Search primitives: `/`, `?`, `n`, `N`.
+### Batch 4 (recommended next)
+- Search primitives: `/`, `?`, `n`, `N`, `*`, `#` (needs the controller's command line).
+- Indent operators `>>`, `<<`, case operators `gu`, `gU`, `g~`.
 
 ### Batch 5 (maintenance / naming)
 - Symbol-prefix rebrand pass to align code identifiers with project name.

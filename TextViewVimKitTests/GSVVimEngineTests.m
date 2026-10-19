@@ -273,7 +273,7 @@
     XCTAssertEqual(adapter.moveDownCalls, (NSUInteger)1);
     XCTAssertEqual(adapter.moveUpCalls, (NSUInteger)1);
     XCTAssertEqual(adapter.moveRightCalls, (NSUInteger)1);
-    XCTAssertEqual(adapter.deleteForwardCalls, (NSUInteger)1);
+    XCTAssertEqualObjects(adapter.text, @"ac def ghi\nlast");
 }
 
 - (void)testOpenLineCommandsEnterInsertMode
@@ -431,7 +431,7 @@
     XCTAssertEqualObjects(adapter.text, @"one\nthree");
 
     XCTAssertTrue([engine handleKeyToken:@"p" adapter:adapter]);
-    XCTAssertEqualObjects(adapter.text, @"one\nthree\ntwo\n");
+    XCTAssertEqualObjects(adapter.text, @"one\nthree\ntwo");
 }
 
 - (void)testDoubleYankLineAndPutBefore
@@ -498,7 +498,7 @@
     XCTAssertTrue([engine handleKeyToken:@"d" adapter:adapter]);
     XCTAssertTrue([engine handleKeyToken:@"g" adapter:adapter]);
     XCTAssertTrue([engine handleKeyToken:@"g" adapter:adapter]);
-    XCTAssertEqualObjects(adapter.text, @"bb\nccc");
+    XCTAssertEqualObjects(adapter.text, @"ccc");
 }
 
 - (void)testDeleteToEndOfFileWithDG
@@ -510,7 +510,7 @@
 
     XCTAssertTrue([engine handleKeyToken:@"d" adapter:adapter]);
     XCTAssertTrue([engine handleKeyToken:@"G" adapter:adapter]);
-    XCTAssertEqualObjects(adapter.text, @"aaa\n");
+    XCTAssertEqualObjects(adapter.text, @"aaa");
 }
 
 - (void)testClipboardMirrorsUnnamedRegisterWhenEnabled
@@ -636,7 +636,7 @@
     XCTAssertTrue([engine handleKeyToken:@"c" adapter:adapter]);
 
     XCTAssertEqual(engine.mode, GSVVimModeInsert);
-    XCTAssertEqualObjects(adapter.text, @"one\nthree");
+    XCTAssertEqualObjects(adapter.text, @"one\n\nthree");
     XCTAssertEqual([adapter selectedRange].location, (NSUInteger)4);
 }
 
@@ -694,7 +694,7 @@
 
     XCTAssertTrue([engine handleKeyToken:@"4" adapter:adapter]);
     XCTAssertTrue([engine handleKeyToken:@"x" adapter:adapter]);
-    XCTAssertEqual(adapter.deleteForwardCalls, (NSUInteger)4);
+    XCTAssertEqualObjects(adapter.text, @"abc def ghi\n");
 }
 
 - (void)testOperatorCountsAndPutCounts
@@ -773,6 +773,334 @@
     XCTAssertTrue([engine handleKeyToken:@"+" adapter:adapter]);
     XCTAssertTrue([engine handleKeyToken:@"P" adapter:adapter]);
     XCTAssertEqualObjects(adapter.text, @"abYYcd");
+}
+
+#pragma mark - Vim fidelity (audit 2026-10)
+
+// Sends each key of a command string; <Esc> is written as \e.
+static void GSVKeys(GSVVimEngine *engine, GSVFakeAdapter *adapter, NSString *keys)
+{
+    for (NSUInteger i = 0; i < [keys length]; i += 1) {
+        unichar ch = [keys characterAtIndex:i];
+        NSString *token = (ch == 0x1b) ? @"<Esc>" : [NSString stringWithCharacters:&ch length:1];
+        [engine handleKeyToken:token adapter:adapter];
+    }
+}
+
+// Types text in Insert mode, as the text view would.
+static void GSVType(GSVFakeAdapter *adapter, NSString *text)
+{
+    [adapter replaceCharactersInRange:NSMakeRange([adapter selectedRange].location, 0) withString:text];
+}
+
+static GSVFakeAdapter *GSVAdapterWithText(NSString *text, NSUInteger cursor)
+{
+    GSVFakeAdapter *adapter = [[GSVFakeAdapter alloc] init];
+    adapter.text = text;
+    adapter.selectedRangeValue = NSMakeRange(cursor, 0);
+    return adapter;
+}
+
+- (void)testUppercaseCommandsAreNotTheirLowercaseOnes
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"  abc\ndef", 3);
+    GSVKeys(engine, adapter, @"A");
+    XCTAssertEqual(engine.mode, GSVVimModeInsert);
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)5);
+    GSVType(adapter, @"!");
+    GSVKeys(engine, adapter, @"\eI");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)2);
+    GSVType(adapter, @"-");
+    GSVKeys(engine, adapter, @"\e");
+    XCTAssertEqualObjects(adapter.text, @"  -abc!\ndef");
+
+    adapter = GSVAdapterWithText(@"abcd", 2);
+    GSVKeys(engine, adapter, @"X");
+    XCTAssertEqualObjects(adapter.text, @"acd");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)1);
+
+    adapter = GSVAdapterWithText(@"one\ntwo", 1);
+    GSVKeys(engine, adapter, @"Yjp");
+    XCTAssertEqualObjects(adapter.text, @"one\ntwo\none");
+}
+
+- (void)testXStaysOnItsLine
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"ab\ncd", 1);
+    GSVKeys(engine, adapter, @"5x");
+    XCTAssertEqualObjects(adapter.text, @"a\ncd");
+    GSVKeys(engine, adapter, @"p");
+    XCTAssertEqualObjects(adapter.text, @"ab\ncd");
+
+    adapter = GSVAdapterWithText(@"a\n\nb", 2);
+    GSVKeys(engine, adapter, @"x");
+    XCTAssertEqualObjects(adapter.text, @"a\n\nb");
+}
+
+- (void)testEscapeDoesNotLeaveTheLine
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"one\ntwo", 4);
+    GSVKeys(engine, adapter, @"i\e");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)4);
+}
+
+- (void)testAppendOnAnEmptyLineStaysOnIt
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"a\n\nb", 2);
+    GSVKeys(engine, adapter, @"a");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)2);
+    XCTAssertEqual(adapter.moveRightCalls, (NSUInteger)0);
+}
+
+- (void)testFindMotionsAndRepeats
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"a,b,c,d", 0);
+    GSVKeys(engine, adapter, @"f,");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)1);
+    GSVKeys(engine, adapter, @";");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3);
+    GSVKeys(engine, adapter, @",");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)1);
+    GSVKeys(engine, adapter, @"2f,");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)5);
+    GSVKeys(engine, adapter, @"Fb");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)2);
+    GSVKeys(engine, adapter, @"0tc");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3);
+    GSVKeys(engine, adapter, @";");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3, @"no further c: the repeat stays");
+    GSVKeys(engine, adapter, @"$Tb");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3);
+
+    // A find stays on its line.
+    adapter = GSVAdapterWithText(@"ab\nab", 0);
+    GSVKeys(engine, adapter, @"fb");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)1);
+    GSVKeys(engine, adapter, @";");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)1);
+}
+
+- (void)testOperatorsWithFindMotions
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"call(arg, more)", 5);
+    GSVKeys(engine, adapter, @"dt)");
+    XCTAssertEqualObjects(adapter.text, @"call()");
+
+    adapter = GSVAdapterWithText(@"a-b-c-d", 0);
+    GSVKeys(engine, adapter, @"d2f-");
+    XCTAssertEqualObjects(adapter.text, @"c-d");
+    GSVKeys(engine, adapter, @".");
+    XCTAssertEqualObjects(adapter.text, @"c-d", @"no second pair of dashes to delete through");
+
+    adapter = GSVAdapterWithText(@"key = value;", 6);
+    GSVKeys(engine, adapter, @"ct;");
+    XCTAssertEqual(engine.mode, GSVVimModeInsert);
+    GSVType(adapter, @"42");
+    GSVKeys(engine, adapter, @"\e");
+    XCTAssertEqualObjects(adapter.text, @"key = 42;");
+}
+
+- (void)testReplaceToggleCaseAndJoin
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"abcd", 1);
+    GSVKeys(engine, adapter, @"rX");
+    XCTAssertEqualObjects(adapter.text, @"aXcd");
+    GSVKeys(engine, adapter, @"0");
+    GSVKeys(engine, adapter, @"3r-");
+    XCTAssertEqualObjects(adapter.text, @"---d");
+    GSVKeys(engine, adapter, @"9rz");
+    XCTAssertEqualObjects(adapter.text, @"---d", @"r with more characters than the line has does nothing");
+
+    adapter = GSVAdapterWithText(@"Hello", 0);
+    GSVKeys(engine, adapter, @"3~");
+    XCTAssertEqualObjects(adapter.text, @"hELlo");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3);
+
+    adapter = GSVAdapterWithText(@"one\n   two\nthree\nfour", 0);
+    GSVKeys(engine, adapter, @"J");
+    XCTAssertEqualObjects(adapter.text, @"one two\nthree\nfour");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)3);
+    GSVKeys(engine, adapter, @"3J");
+    XCTAssertEqualObjects(adapter.text, @"one two three four");
+}
+
+- (void)testCountedGoToLine
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"one\n  two\nthree", 0);
+    GSVKeys(engine, adapter, @"2G");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)6);
+    GSVKeys(engine, adapter, @"3gg");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)10);
+    GSVKeys(engine, adapter, @"1G");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)0);
+    XCTAssertEqual(adapter.moveLastLineCalls, (NSUInteger)0);
+}
+
+- (void)testLinewiseOperatorsOverLineMotions
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"aaa\nbbb\nccc", 1);
+    GSVKeys(engine, adapter, @"dj");
+    XCTAssertEqualObjects(adapter.text, @"ccc");
+    GSVKeys(engine, adapter, @"P");
+    XCTAssertEqualObjects(adapter.text, @"aaa\nbbb\nccc");
+
+    adapter = GSVAdapterWithText(@"aaa\nbbb\nccc", 9);
+    GSVKeys(engine, adapter, @"dd");
+    XCTAssertEqualObjects(adapter.text, @"aaa\nbbb", @"dd on the last line takes the newline before it");
+}
+
+- (void)testDeleteWordStopsAtTheEndOfTheLine
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    // The fake adapter's w moves three characters: from "ab" to "cd" here.
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"ab\ncd", 0);
+    GSVKeys(engine, adapter, @"dw");
+    XCTAssertEqualObjects(adapter.text, @"\ncd");
+}
+
+- (void)testDotRepeatsChangesWithTheirTypedText
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"x = 1;\ny = 2;", 4);
+    GSVKeys(engine, adapter, @"ct;");
+    GSVType(adapter, @"10");
+    GSVKeys(engine, adapter, @"\e");
+    XCTAssertEqualObjects(adapter.text, @"x = 10;\ny = 2;");
+    adapter.selectedRangeValue = NSMakeRange(12, 0);
+    GSVKeys(engine, adapter, @".");
+    XCTAssertEqualObjects(adapter.text, @"x = 10;\ny = 10;");
+    XCTAssertEqual(engine.mode, GSVVimModeNormal);
+
+    adapter = GSVAdapterWithText(@"a\nb\n", 0);
+    GSVKeys(engine, adapter, @"A");
+    GSVType(adapter, @";");
+    GSVKeys(engine, adapter, @"\ej.");
+    XCTAssertEqualObjects(adapter.text, @"a;\nb;\n");
+}
+
+- (void)testInsertCountRepeatsTheTypedText
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"[]", 1);
+    GSVKeys(engine, adapter, @"3i");
+    GSVType(adapter, @"ab");
+    GSVKeys(engine, adapter, @"\e");
+    XCTAssertEqualObjects(adapter.text, @"[ababab]");
+}
+
+- (void)testQuoteAndBracketTextObjects
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"say \"hello there\" now", 8);
+    GSVKeys(engine, adapter, @"ci\"");
+    XCTAssertEqual(engine.mode, GSVVimModeInsert);
+    GSVType(adapter, @"bye");
+    GSVKeys(engine, adapter, @"\e");
+    XCTAssertEqualObjects(adapter.text, @"say \"bye\" now");
+
+    adapter = GSVAdapterWithText(@"say \"hi\" now", 0);
+    GSVKeys(engine, adapter, @"da\"");
+    XCTAssertEqualObjects(adapter.text, @"say now", @"the cursor before the quotes uses the first quoted string");
+
+    adapter = GSVAdapterWithText(@"f(a, (b), c)", 6);
+    GSVKeys(engine, adapter, @"di(");
+    XCTAssertEqualObjects(adapter.text, @"f(a, (), c)");
+    GSVKeys(engine, adapter, @"0f,");
+    GSVKeys(engine, adapter, @"dab");
+    XCTAssertEqualObjects(adapter.text, @"f");
+
+    adapter = GSVAdapterWithText(@"if {\n  body;\n}", 8);
+    GSVKeys(engine, adapter, @"yi{");
+    adapter.selectedRangeValue = NSMakeRange(8, 0);
+    GSVKeys(engine, adapter, @"di}");
+    XCTAssertEqualObjects(adapter.text, @"if {\n}", @"i{ on a block takes its inner lines");
+
+    adapter = GSVAdapterWithText(@"x foo.bar(1) y", 4);
+    GSVKeys(engine, adapter, @"diW");
+    XCTAssertEqualObjects(adapter.text, @"x  y");
+}
+
+- (void)testNamedAndBlackHoleRegisters
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"one\ntwo\nthree", 0);
+    GSVKeys(engine, adapter, @"\"ayy");
+    GSVKeys(engine, adapter, @"j\"Ayy");
+    GSVKeys(engine, adapter, @"j\"_dd");
+    XCTAssertEqualObjects(adapter.text, @"one\ntwo");
+    GSVKeys(engine, adapter, @"\"ap");
+    XCTAssertEqualObjects(adapter.text, @"one\ntwo\none\ntwo");
+    GSVKeys(engine, adapter, @"gg0p");
+    XCTAssertEqualObjects(adapter.text, @"one\none\ntwo\ntwo\none\ntwo",
+                          @"the unnamed register has the last yank, not the black-hole delete");
+}
+
+- (void)testWordParagraphAndBracketMotions
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"a.b c-d  e", 0);
+    GSVKeys(engine, adapter, @"W");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)4);
+    GSVKeys(engine, adapter, @"E");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)6);
+    GSVKeys(engine, adapter, @"B");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)4);
+
+    adapter = GSVAdapterWithText(@"p1\np1\n\np2\n\np3", 0);
+    GSVKeys(engine, adapter, @"}");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)6);
+    GSVKeys(engine, adapter, @"}");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)10);
+    GSVKeys(engine, adapter, @"{");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)6);
+
+    adapter = GSVAdapterWithText(@"x = f(a[1], {b});", 0);
+    GSVKeys(engine, adapter, @"%");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)15);
+    GSVKeys(engine, adapter, @"%");
+    XCTAssertEqual([adapter selectedRange].location, (NSUInteger)5);
+    GSVKeys(engine, adapter, @"d%");
+    XCTAssertEqualObjects(adapter.text, @"x = f;");
+}
+
+- (void)testVisualModeCommands
+{
+    GSVVimEngine *engine = [[GSVVimEngine alloc] init];
+    GSVFakeAdapter *adapter = GSVAdapterWithText(@"one two three", 5);
+    GSVKeys(engine, adapter, @"viwd");
+    XCTAssertEqualObjects(adapter.text, @"one  three");
+    XCTAssertEqual(engine.mode, GSVVimModeNormal);
+
+    adapter = GSVAdapterWithText(@"abcdef", 1);
+    GSVKeys(engine, adapter, @"vfd~");
+    XCTAssertEqualObjects(adapter.text, @"aBCDef");
+
+    adapter = GSVAdapterWithText(@"abcdef", 1);
+    GSVKeys(engine, adapter, @"vllohx");
+    XCTAssertEqualObjects(adapter.text, @"ef", @"o moves the cursor to the other end");
+
+    adapter = GSVAdapterWithText(@"abcdef", 1);
+    GSVKeys(engine, adapter, @"vllr*");
+    XCTAssertEqualObjects(adapter.text, @"a***ef");
+
+    adapter = GSVAdapterWithText(@"one\ntwo\nthree", 0);
+    GSVKeys(engine, adapter, @"VjJ");
+    XCTAssertEqualObjects(adapter.text, @"one two\nthree");
+
+    adapter = GSVAdapterWithText(@"keep cut", 0);
+    GSVKeys(engine, adapter, @"yiw");
+    adapter.selectedRangeValue = NSMakeRange(5, 0);
+    GSVKeys(engine, adapter, @"viwp");
+    XCTAssertEqualObjects(adapter.text, @"keep keep");
 }
 
 @end
